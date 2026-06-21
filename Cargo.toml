@@ -1,0 +1,9 @@
+[package]
+name = "fake_full_screen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dark-light = "2.0.0"
+eframe = "0.34.3"
+egui = "0.34.3"
