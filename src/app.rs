@@ -14,6 +14,8 @@ pub struct App {
     root: Region,
     split_dir: SplitDirection,
     theme: Theme,
+    /// Tracks whether the one-time startup viewport snap has been issued.
+    startup_done: bool,
 }
 
 impl App {
@@ -26,8 +28,40 @@ impl App {
             root: Region::new(screen),
             split_dir: SplitDirection::Vertical,
             theme,
+            startup_done: false,
         }
     }
+}
+
+// ── Windows-only: Win32 helper to position the window over the primary monitor ──
+//
+// eframe's `with_maximized` + `with_decorations(false)` is usually enough, but
+// some Windows display drivers / DPI scaling configurations leave the window
+// short of the taskbar area.  Calling SetWindowPos directly with the monitor
+// work-area fixes that.
+#[cfg(target_os = "windows")]
+fn snap_to_primary_monitor(ctx: &Context) {
+    use winapi::um::winuser::{
+        GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
+    };
+
+    // Read the primary monitor resolution in logical pixels via the Win32 API.
+    // We convert to f32 for egui's viewport commands.
+    let (w, h) = unsafe {
+        (
+            GetSystemMetrics(SM_CXSCREEN) as f32,
+            GetSystemMetrics(SM_CYSCREEN) as f32,
+        )
+    };
+
+    // Use egui's cross-platform viewport commands to reposition and resize.
+    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
+    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+}
+
+#[cfg(not(target_os = "windows"))]
+fn snap_to_primary_monitor(_ctx: &Context) {
+    // No-op on non-Windows: the Linux/macOS paths use a normal window.
 }
 
 impl eframe::App for App {
@@ -38,6 +72,13 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        // On the very first rendered frame, issue the Win32 snap so the
+        // borderless window covers the full primary monitor exactly.
+        if !self.startup_done {
+            snap_to_primary_monitor(&ctx);
+            self.startup_done = true;
+        }
 
         // ── Toolbar ──────────────────────────────────────────────────────────
         Panel::top("toolbar").show_inside(ui, |ui| {
@@ -63,6 +104,15 @@ impl eframe::App for App {
 
                 if ui.button(self.theme.label()).clicked() {
                     self.theme = self.theme.toggled();
+                }
+
+                ui.separator();
+
+                // Escape key exits the fake-fullscreen window.
+                if ui.button("✕  Exit").clicked()
+                    || ctx.input(|i| i.key_pressed(egui::Key::Escape))
+                {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
         });
