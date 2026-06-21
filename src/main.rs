@@ -1,19 +1,10 @@
+// On Windows suppress the console window that would otherwise pop up
+// alongside the GUI application.
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod app;
 mod region;
 mod theme;
-
-// On Windows suppress the console window that would otherwise pop up
-// alongside the GUI application.
-#[cfg(target_os = "windows")]
-#[link_section = ".rsrc"]
-#[used]
-static _WINDOWS_SUBSYSTEM: () = ();
-
-// Tell the Windows linker to use the Windows subsystem (no console).
-#[cfg(target_os = "windows")]
-mod windows_subsystem {
-    // The attribute must live on main or on a dummy item in the crate root.
-}
 
 fn main() -> eframe::Result<()> {
     // On Windows we want a borderless window positioned to cover the full

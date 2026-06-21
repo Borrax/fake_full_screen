@@ -23,7 +23,7 @@ impl App {
         let theme = Theme::from_os();
         theme.apply(&cc.egui_ctx);
 
-        let screen = cc.egui_ctx.screen_rect();
+        let screen = cc.egui_ctx.content_rect();
         Self {
             root: Region::new(screen),
             split_dir: SplitDirection::Vertical,
