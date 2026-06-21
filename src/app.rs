@@ -1,19 +1,38 @@
 use crate::region::{Region, SplitDirection};
 use crate::theme::Theme;
+use crate::vlc::{snap_vlc, SnapResult};
 use egui::{Align2, CentralPanel, Color32, Context, FontId, Panel, Sense, Stroke};
 
 /// Thickness of the dividing lines drawn between regions.
 const DIVIDER_THICKNESS: f32 = 2.0;
 /// Colour of dividing lines (semi-transparent, works on both themes).
 const DIVIDER_COLOR: Color32 = Color32::from_rgba_premultiplied(180, 180, 180, 200);
-/// Fill colour for hovered leaf regions.
+/// Fill for hovered-but-not-selected leaf regions.
 const HOVER_FILL: Color32 = Color32::from_rgba_premultiplied(100, 149, 237, 60);
+/// Fill for the currently selected leaf region.
+const SELECT_FILL: Color32 = Color32::from_rgba_premultiplied(100, 200, 120, 90);
+/// Border colour for the selected region (brighter than the generic divider).
+const SELECT_BORDER: Color32 = Color32::from_rgba_premultiplied(80, 220, 100, 255);
+
+/// What happens when the user clicks a leaf region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Click splits the region at the clicked point.
+    Split,
+    /// Click selects the region (to later snap VLC into it).
+    Select,
+}
 
 /// Top-level application state.
 pub struct App {
     root: Region,
     split_dir: SplitDirection,
     theme: Theme,
+    mode: Mode,
+    /// Index into `root.leaves()` of the currently selected region, if any.
+    selected: Option<usize>,
+    /// Short feedback message shown in the toolbar after a snap attempt.
+    snap_status: Option<String>,
     /// Tracks whether the one-time startup viewport snap has been issued.
     startup_done: bool,
 }
@@ -28,25 +47,19 @@ impl App {
             root: Region::new(screen),
             split_dir: SplitDirection::Vertical,
             theme,
+            mode: Mode::Split,
+            selected: None,
+            snap_status: None,
             startup_done: false,
         }
     }
 }
 
 // ── Windows-only: Win32 helper to position the window over the primary monitor ──
-//
-// eframe's `with_maximized` + `with_decorations(false)` is usually enough, but
-// some Windows display drivers / DPI scaling configurations leave the window
-// short of the taskbar area.  Calling SetWindowPos directly with the monitor
-// work-area fixes that.
 #[cfg(target_os = "windows")]
 fn snap_to_primary_monitor(ctx: &Context) {
-    use winapi::um::winuser::{
-        GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
-    };
+    use winapi::um::winuser::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
 
-    // Read the primary monitor resolution in logical pixels via the Win32 API.
-    // We convert to f32 for egui's viewport commands.
     let (w, h) = unsafe {
         (
             GetSystemMetrics(SM_CXSCREEN) as f32,
@@ -54,18 +67,14 @@ fn snap_to_primary_monitor(ctx: &Context) {
         )
     };
 
-    // Use egui's cross-platform viewport commands to reposition and resize.
     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
 }
 
 #[cfg(not(target_os = "windows"))]
-fn snap_to_primary_monitor(_ctx: &Context) {
-    // No-op on non-Windows: the Linux/macOS paths use a normal window.
-}
+fn snap_to_primary_monitor(_ctx: &Context) {}
 
 impl eframe::App for App {
-    /// Theme application lives in `logic` so it runs even when the window is hidden.
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.theme.apply(ctx);
     }
@@ -73,8 +82,6 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        // On the very first rendered frame, issue the Win32 snap so the
-        // borderless window covers the full primary monitor exactly.
         if !self.startup_done {
             snap_to_primary_monitor(&ctx);
             self.startup_done = true;
@@ -86,34 +93,87 @@ impl eframe::App for App {
                 ui.heading("fake_full_screen");
                 ui.separator();
 
-                ui.label("Split:");
+                // ── Mode toggle ──────────────────────────────────────────────
+                ui.label("Mode:");
                 if ui
-                    .selectable_label(self.split_dir == SplitDirection::Vertical, "Vertical")
+                    .selectable_label(self.mode == Mode::Split, "✂ Split")
                     .clicked()
                 {
-                    self.split_dir = SplitDirection::Vertical;
+                    self.mode = Mode::Split;
+                    self.selected = None;
                 }
                 if ui
-                    .selectable_label(self.split_dir == SplitDirection::Horizontal, "Horizontal")
+                    .selectable_label(self.mode == Mode::Select, "🖱 Select")
                     .clicked()
                 {
-                    self.split_dir = SplitDirection::Horizontal;
+                    self.mode = Mode::Select;
                 }
 
                 ui.separator();
 
-                if ui.button(self.theme.label()).clicked() {
-                    self.theme = self.theme.toggled();
+                // ── Split-direction picker (only relevant in Split mode) ──────
+                if self.mode == Mode::Split {
+                    ui.label("Dir:");
+                    if ui
+                        .selectable_label(
+                            self.split_dir == SplitDirection::Vertical,
+                            "Vertical",
+                        )
+                        .clicked()
+                    {
+                        self.split_dir = SplitDirection::Vertical;
+                    }
+                    if ui
+                        .selectable_label(
+                            self.split_dir == SplitDirection::Horizontal,
+                            "Horizontal",
+                        )
+                        .clicked()
+                    {
+                        self.split_dir = SplitDirection::Horizontal;
+                    }
+                    ui.separator();
                 }
 
-                ui.separator();
+                // ── Snap VLC button (enabled when a region is selected) ───────
+                let snap_enabled = self.selected.is_some();
+                ui.add_enabled_ui(snap_enabled, |ui| {
+                    if ui.button("▶ Snap VLC").clicked() {
+                        if let Some(idx) = self.selected {
+                            let leaves = self.root.leaves();
+                            if let Some(&rect) = leaves.get(idx) {
+                                let status = match snap_vlc(&rect) {
+                                    SnapResult::Ok => "VLC snapped ✓".to_owned(),
+                                    SnapResult::NotFound => "VLC not found — is it open?".to_owned(),
+                                    SnapResult::Error(code) => {
+                                        format!("Win32 error {code}")
+                                    }
+                                };
+                                self.snap_status = Some(status);
+                            }
+                        }
+                    }
+                });
 
-                // Escape key exits the fake-fullscreen window.
-                if ui.button("✕  Exit").clicked()
-                    || ctx.input(|i| i.key_pressed(egui::Key::Escape))
-                {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                // ── Status feedback ──────────────────────────────────────────
+                if let Some(ref msg) = self.snap_status {
+                    ui.separator();
+                    ui.label(msg);
                 }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("✕").clicked()
+                        || ctx.input(|i| i.key_pressed(egui::Key::Escape))
+                    {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+
+                    ui.separator();
+
+                    if ui.button(self.theme.label()).clicked() {
+                        self.theme = self.theme.toggled();
+                    }
+                });
             });
         });
 
@@ -130,34 +190,77 @@ impl eframe::App for App {
             let pointer_pos = ctx.pointer_hover_pos();
             let leaves = self.root.leaves();
 
-            for leaf_rect in &leaves {
-                if let Some(p) = pointer_pos {
-                    if leaf_rect.contains(p) {
-                        painter.rect_filled(*leaf_rect, 0.0, HOVER_FILL);
-                    }
+            // Allocate the full canvas for click detection first.
+            let response = ui.allocate_rect(canvas_rect, Sense::click());
+
+            for (idx, leaf_rect) in leaves.iter().enumerate() {
+                let is_selected = self.selected == Some(idx);
+                let is_hovered = pointer_pos.map_or(false, |p| leaf_rect.contains(p));
+
+                // Background fill
+                if is_selected {
+                    painter.rect_filled(*leaf_rect, 0.0, SELECT_FILL);
+                } else if is_hovered {
+                    painter.rect_filled(*leaf_rect, 0.0, HOVER_FILL);
                 }
 
+                // Border
+                let (border_color, border_width) = if is_selected {
+                    (SELECT_BORDER, DIVIDER_THICKNESS + 1.0)
+                } else {
+                    (DIVIDER_COLOR, DIVIDER_THICKNESS)
+                };
                 painter.rect_stroke(
                     *leaf_rect,
                     0.0,
-                    Stroke::new(DIVIDER_THICKNESS, DIVIDER_COLOR),
+                    Stroke::new(border_width, border_color),
                     egui::StrokeKind::Inside,
                 );
 
-                let label = format!("{:.0} × {:.0}", leaf_rect.width(), leaf_rect.height());
+                // Dimension label + selection hint
+                let dim_label =
+                    format!("{:.0} × {:.0}", leaf_rect.width(), leaf_rect.height());
+                let hint = if is_selected {
+                    " [selected]".to_owned()
+                } else if self.mode == Mode::Select {
+                    " [click to select]".to_owned()
+                } else {
+                    String::new()
+                };
                 painter.text(
                     leaf_rect.center(),
                     Align2::CENTER_CENTER,
-                    label,
+                    format!("{dim_label}{hint}"),
                     FontId::proportional(12.0),
                     ui.visuals().text_color(),
                 );
             }
 
-            let response = ui.allocate_rect(canvas_rect, Sense::click());
+            // Handle click
             if response.clicked() {
                 if let Some(pos) = response.interact_pointer_pos() {
-                    self.root.try_split(pos, self.split_dir);
+                    match self.mode {
+                        Mode::Split => {
+                            self.root.try_split(pos, self.split_dir);
+                            // If the selected region was split, deselect it —
+                            // it no longer exists as a leaf.
+                            self.selected = None;
+                            self.snap_status = None;
+                        }
+                        Mode::Select => {
+                            // Find which leaf the click landed in.
+                            let new_sel = leaves
+                                .iter()
+                                .position(|r| r.contains(pos));
+                            if new_sel == self.selected {
+                                // Clicking the already-selected region deselects it.
+                                self.selected = None;
+                            } else {
+                                self.selected = new_sel;
+                                self.snap_status = None;
+                            }
+                        }
+                    }
                 }
             }
         });
