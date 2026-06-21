@@ -5,6 +5,7 @@
 mod app;
 mod region;
 mod theme;
+mod vlc;
 
 fn main() -> eframe::Result<()> {
     // On Windows we want a borderless window positioned to cover the full
