@@ -11,8 +11,8 @@ impl Theme {
     /// Detect the OS preference via the `dark-light` crate.
     pub fn from_os() -> Self {
         match dark_light::detect() {
-            dark_light::Mode::Dark | dark_light::Mode::Default => Theme::Dark,
-            dark_light::Mode::Light => Theme::Light,
+            Ok(dark_light::Mode::Light) => Theme::Light,
+            _ => Theme::Dark, // Dark, Unspecified, or error → default dark
         }
     }
 
