@@ -3,37 +3,27 @@ use crate::theme::Theme;
 use crate::vlc::{snap_vlc, SnapResult};
 use egui::{Align2, CentralPanel, Color32, Context, FontId, Panel, Sense, Stroke};
 
-/// Thickness of the dividing lines drawn between regions.
 const DIVIDER_THICKNESS: f32 = 2.0;
-/// Colour of dividing lines (semi-transparent, works on both themes).
 const DIVIDER_COLOR: Color32 = Color32::from_rgba_premultiplied(180, 180, 180, 200);
-/// Fill for hovered-but-not-selected leaf regions.
 const HOVER_FILL: Color32 = Color32::from_rgba_premultiplied(100, 149, 237, 60);
-/// Fill for the currently selected leaf region.
 const SELECT_FILL: Color32 = Color32::from_rgba_premultiplied(100, 200, 120, 90);
-/// Border colour for the selected region (brighter than the generic divider).
 const SELECT_BORDER: Color32 = Color32::from_rgba_premultiplied(80, 220, 100, 255);
 
-/// What happens when the user clicks a leaf region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
-    /// Click splits the region at the clicked point.
     Split,
-    /// Click selects the region (to later snap VLC into it).
     Select,
 }
 
-/// Top-level application state.
 pub struct App {
     root: Region,
     split_dir: SplitDirection,
     theme: Theme,
     mode: Mode,
-    /// Index into `root.leaves()` of the currently selected region, if any.
+    // index into root.leaves() of the currently selected region
     selected: Option<usize>,
-    /// Short feedback message shown in the toolbar after a snap attempt.
+    // feedback shown in the toolbar after a snap attempt
     snap_status: Option<String>,
-    /// Tracks whether the one-time startup viewport snap has been issued.
     startup_done: bool,
 }
 
@@ -55,7 +45,6 @@ impl App {
     }
 }
 
-// ── Windows-only: Win32 helper to position the window over the primary monitor ──
 #[cfg(target_os = "windows")]
 fn snap_to_primary_monitor(ctx: &Context) {
     use winapi::um::winuser::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
@@ -87,13 +76,11 @@ impl eframe::App for App {
             self.startup_done = true;
         }
 
-        // ── Toolbar ──────────────────────────────────────────────────────────
         Panel::top("toolbar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("fake_full_screen");
                 ui.separator();
 
-                // ── Mode toggle ──────────────────────────────────────────────
                 ui.label("Mode:");
                 if ui
                     .selectable_label(self.mode == Mode::Split, "✂ Split")
@@ -111,7 +98,6 @@ impl eframe::App for App {
 
                 ui.separator();
 
-                // ── Split-direction picker (only relevant in Split mode) ──────
                 if self.mode == Mode::Split {
                     ui.label("Dir:");
                     if ui
@@ -135,7 +121,6 @@ impl eframe::App for App {
                     ui.separator();
                 }
 
-                // ── Snap VLC button (enabled when a region is selected) ───────
                 let snap_enabled = self.selected.is_some();
                 ui.add_enabled_ui(snap_enabled, |ui| {
                     if ui.button("▶ Snap VLC").clicked() {
@@ -155,7 +140,6 @@ impl eframe::App for App {
                     }
                 });
 
-                // ── Status feedback ──────────────────────────────────────────
                 if let Some(ref msg) = self.snap_status {
                     ui.separator();
                     ui.label(msg);
@@ -177,11 +161,9 @@ impl eframe::App for App {
             });
         });
 
-        // ── Canvas ───────────────────────────────────────────────────────────
         CentralPanel::default().show_inside(ui, |ui| {
             let canvas_rect = ui.available_rect_before_wrap();
 
-            // Keep the root leaf in sync with the canvas size.
             if let crate::region::Region::Leaf { rect } = &mut self.root {
                 *rect = canvas_rect;
             }
@@ -190,21 +172,18 @@ impl eframe::App for App {
             let pointer_pos = ctx.pointer_hover_pos();
             let leaves = self.root.leaves();
 
-            // Allocate the full canvas for click detection first.
             let response = ui.allocate_rect(canvas_rect, Sense::click());
 
             for (idx, leaf_rect) in leaves.iter().enumerate() {
                 let is_selected = self.selected == Some(idx);
                 let is_hovered = pointer_pos.map_or(false, |p| leaf_rect.contains(p));
 
-                // Background fill
                 if is_selected {
                     painter.rect_filled(*leaf_rect, 0.0, SELECT_FILL);
                 } else if is_hovered {
                     painter.rect_filled(*leaf_rect, 0.0, HOVER_FILL);
                 }
 
-                // Border
                 let (border_color, border_width) = if is_selected {
                     (SELECT_BORDER, DIVIDER_THICKNESS + 1.0)
                 } else {
@@ -217,7 +196,6 @@ impl eframe::App for App {
                     egui::StrokeKind::Inside,
                 );
 
-                // Dimension label + selection hint
                 let dim_label =
                     format!("{:.0} × {:.0}", leaf_rect.width(), leaf_rect.height());
                 let hint = if is_selected {
@@ -236,24 +214,20 @@ impl eframe::App for App {
                 );
             }
 
-            // Handle click
             if response.clicked() {
                 if let Some(pos) = response.interact_pointer_pos() {
                     match self.mode {
                         Mode::Split => {
                             self.root.try_split(pos, self.split_dir);
-                            // If the selected region was split, deselect it —
-                            // it no longer exists as a leaf.
+                            // deselect — the split leaf no longer exists
                             self.selected = None;
                             self.snap_status = None;
                         }
                         Mode::Select => {
-                            // Find which leaf the click landed in.
                             let new_sel = leaves
                                 .iter()
                                 .position(|r| r.contains(pos));
                             if new_sel == self.selected {
-                                // Clicking the already-selected region deselects it.
                                 self.selected = None;
                             } else {
                                 self.selected = new_sel;
