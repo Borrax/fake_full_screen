@@ -25,6 +25,8 @@ pub struct App {
     // feedback shown in the toolbar after a snap attempt
     snap_status: Option<String>,
     startup_done: bool,
+    // screen rect captured at startup for Reset
+    screen_rect: egui::Rect,
 }
 
 impl App {
@@ -41,6 +43,7 @@ impl App {
             selected: None,
             snap_status: None,
             startup_done: false,
+            screen_rect: screen,
         }
     }
 }
@@ -75,6 +78,30 @@ impl eframe::App for App {
             snap_to_primary_monitor(&ctx);
             self.startup_done = true;
         }
+
+        // Keyboard shortcuts
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::V) {
+                self.split_dir = SplitDirection::Vertical;
+            }
+            if i.key_pressed(egui::Key::H) {
+                self.split_dir = SplitDirection::Horizontal;
+            }
+            if i.key_pressed(egui::Key::S) {
+                self.mode = match self.mode {
+                    Mode::Split => Mode::Select,
+                    Mode::Select => {
+                        self.selected = None;
+                        Mode::Split
+                    }
+                };
+            }
+            if i.key_pressed(egui::Key::R) {
+                self.root = Region::new(self.screen_rect);
+                self.selected = None;
+                self.snap_status = None;
+            }
+        });
 
         Panel::top("toolbar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
@@ -143,6 +170,13 @@ impl eframe::App for App {
                 if let Some(ref msg) = self.snap_status {
                     ui.separator();
                     ui.label(msg);
+                }
+
+                ui.separator();
+                if ui.button("↺ Reset").clicked() {
+                    self.root = Region::new(self.screen_rect);
+                    self.selected = None;
+                    self.snap_status = None;
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
