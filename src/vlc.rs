@@ -21,7 +21,7 @@ mod imp {
     use winapi::um::winuser::{
         EnumWindows, GetLastError, GetWindowTextW, IsWindowVisible, SetWindowLongPtrW,
         SetWindowPos, ShowWindow, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED,
-        SWP_NOACTIVATE, SWP_NOZORDER, SW_RESTORE, WS_BORDER, WS_CAPTION, WS_DLGFRAME,
+        SWP_NOACTIVATE, SW_RESTORE, WS_BORDER, WS_CAPTION, WS_DLGFRAME,
         WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
     };
 
@@ -90,6 +90,7 @@ mod imp {
             let new_style = (style & !DECORATION_STYLES) as isize;
             SetWindowLongPtrW(hwnd, GWL_STYLE, new_style);
 
+            // SWP_NOZORDER must be absent so HWND_TOPMOST actually takes effect.
             let ok = SetWindowPos(
                 hwnd,
                 HWND_TOPMOST,
@@ -97,7 +98,7 @@ mod imp {
                 rect.top() as i32,
                 rect.width() as i32,
                 rect.height() as i32,
-                SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
 
             if ok == 0 {
