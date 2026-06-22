@@ -18,8 +18,9 @@ mod imp {
 
     use winapi::shared::minwindef::{BOOL, LPARAM};
     use winapi::shared::windef::HWND;
+    use winapi::um::errhandlingapi::GetLastError;
     use winapi::um::winuser::{
-        EnumWindows, GetLastError, GetWindowTextW, IsWindowVisible, SetWindowLongPtrW,
+        EnumWindows, GetWindowTextW, IsWindowVisible, SetWindowLongPtrW,
         SetWindowPos, ShowWindow, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED,
         SWP_NOACTIVATE, SW_RESTORE, WS_BORDER, WS_CAPTION, WS_DLGFRAME,
         WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
@@ -39,14 +40,14 @@ mod imp {
     }
 
     unsafe extern "system" fn enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let state = &mut *(lparam as *mut FindState);
+        let state = unsafe { &mut *(lparam as *mut FindState) };
 
-        if IsWindowVisible(hwnd) == 0 {
+        if unsafe { IsWindowVisible(hwnd) } == 0 {
             return 1;
         }
 
         let mut buf = [0u16; 512];
-        let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32) as usize;
+        let len = unsafe { GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32) } as usize;
         if len == 0 {
             return 1;
         }

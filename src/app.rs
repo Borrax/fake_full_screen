@@ -202,11 +202,13 @@ impl eframe::App for App {
                 *rect = canvas_rect;
             }
 
-            let painter = ui.painter();
             let pointer_pos = ctx.pointer_hover_pos();
             let leaves = self.root.leaves();
 
+            // allocate_rect takes a mutable borrow of ui, so get the response
+            // before holding a painter (which takes an immutable borrow).
             let response = ui.allocate_rect(canvas_rect, Sense::click());
+            let painter = ui.painter();
 
             for (idx, leaf_rect) in leaves.iter().enumerate() {
                 let is_selected = self.selected == Some(idx);
