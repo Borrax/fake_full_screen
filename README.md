@@ -44,11 +44,22 @@ The crate compiles on Linux/macOS too (VLC snap is a no-op stub there).
 1. Run the app — the full primary monitor appears as a single region.
 2. **Split mode** (default): choose Vertical or Horizontal, then click
    inside a region to split it at that point.  Repeat as needed.
-3. Switch to **Select mode** in the toolbar.
+3. Switch to **Select mode** in the toolbar (or press `S`).
 4. Click the region you want VLC to fill — it highlights green.
 5. Open VLC (if not already running).
 6. Click **▶ Snap VLC** — VLC moves and goes borderless inside the region.
-7. Press **Escape** or **✕** to exit the overlay.
+7. Press **↺ Reset** (or `R`) to clear all splits and start over.
+8. Press **Escape** or **✕** to exit the overlay.
+
+### Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| `V` | Switch split direction to Vertical |
+| `H` | Switch split direction to Horizontal |
+| `S` | Toggle Split / Select mode |
+| `R` | Reset all splits |
+| `Esc` | Close the overlay |
 
 ## How the VLC snap works (Windows)
 
