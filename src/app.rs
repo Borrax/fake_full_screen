@@ -155,7 +155,7 @@ impl eframe::App for App {
                             let leaves = self.root.leaves();
                             if let Some(&rect) = leaves.get(idx) {
                                 let status = match snap_vlc(&rect) {
-                                    SnapResult::Ok => "VLC snapped ✓".to_owned(),
+                                    SnapResult::Ok => "VLC snapped (borderless) ✓".to_owned(),
                                     SnapResult::NotFound => "VLC not found — is it open?".to_owned(),
                                     SnapResult::Error(code) => {
                                         format!("Win32 error {code}")
