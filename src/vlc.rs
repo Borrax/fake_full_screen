@@ -138,7 +138,14 @@ mod imp {
         unsafe {
             ShowWindow(hwnd, SW_RESTORE);
 
-            let style = winapi::um::winuser::GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+            hide_menu(hwnd);
+
+            let mut client_rect = std::mem::zeroed();
+            GetClientRect(hwnd, &mut client_rect);
+            let client_width = client_rect.right - client_rect.left;
+            hide_controls(hwnd, client_width);
+
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
             let new_style = (style & !DECORATION_STYLES) as isize;
             SetWindowLongPtrW(hwnd, GWL_STYLE, new_style);
 
@@ -154,10 +161,21 @@ mod imp {
             );
 
             if ok == 0 {
-                SnapResult::Error(GetLastError())
-            } else {
-                SnapResult::Ok
+                return SnapResult::Error(GetLastError());
             }
+
+            // Second pass: reflow the video into the now-cleared space.
+            SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                rect.left() as i32,
+                rect.top() as i32,
+                rect.width() as i32,
+                rect.height() as i32,
+                SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+
+            SnapResult::Ok
         }
     }
 
