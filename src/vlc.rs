@@ -20,10 +20,11 @@ mod imp {
     use winapi::shared::windef::HWND;
     use winapi::um::errhandlingapi::GetLastError;
     use winapi::um::winuser::{
-        DrawMenuBar, EnumWindows, GetWindowTextW, IsWindowVisible, SetMenu,
-        SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_STYLE, HWND_TOPMOST,
-        SWP_FRAMECHANGED, SWP_NOACTIVATE, SW_RESTORE, WS_BORDER, WS_CAPTION,
-        WS_DLGFRAME, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+        DrawMenuBar, EnumChildWindows, EnumWindows, GetClientRect, GetWindowTextW,
+        IsWindowVisible, SetMenu, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+        GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SW_HIDE,
+        SW_RESTORE, WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_MAXIMIZEBOX,
+        WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
     };
 
     const DECORATION_STYLES: u32 = WS_CAPTION
@@ -33,6 +34,9 @@ mod imp {
         | WS_SYSMENU
         | WS_BORDER
         | WS_DLGFRAME;
+
+    // Height threshold (pixels) for identifying toolbar-height child windows.
+    const TOOLBAR_MAX_HEIGHT: i32 = 80;
 
     struct FindState {
         needle: Vec<u16>,
@@ -88,6 +92,33 @@ mod imp {
             SetMenu(hwnd, std::ptr::null_mut());
             DrawMenuBar(hwnd);
         }
+    }
+
+    struct ControlsState {
+        parent_width: i32,
+    }
+
+    unsafe extern "system" fn controls_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let state = unsafe { &*(lparam as *const ControlsState) };
+
+        if unsafe { IsWindowVisible(hwnd) } == 0 {
+            return 1;
+        }
+
+        let mut rect = unsafe { std::mem::zeroed() };
+        if unsafe { GetClientRect(hwnd, &mut rect) } == 0 {
+            return 1;
+        }
+
+        let h = rect.bottom - rect.top;
+        let w = rect.right - rect.left;
+
+        // Hide child windows that span most of the parent width and are toolbar-tall.
+        if h > 0 && h <= TOOLBAR_MAX_HEIGHT && w >= state.parent_width / 2 {
+            unsafe { ShowWindow(hwnd, SW_HIDE) };
+        }
+
+        1
     }
 
     fn snap_hwnd(hwnd: HWND, rect: &egui::Rect) -> SnapResult {
