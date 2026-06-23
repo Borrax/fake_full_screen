@@ -20,10 +20,10 @@ mod imp {
     use winapi::shared::windef::HWND;
     use winapi::um::errhandlingapi::GetLastError;
     use winapi::um::winuser::{
-        EnumWindows, GetWindowTextW, IsWindowVisible, SetWindowLongPtrW,
-        SetWindowPos, ShowWindow, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED,
-        SWP_NOACTIVATE, SW_RESTORE, WS_BORDER, WS_CAPTION, WS_DLGFRAME,
-        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+        DrawMenuBar, EnumWindows, GetWindowTextW, IsWindowVisible, SetMenu,
+        SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_STYLE, HWND_TOPMOST,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SW_RESTORE, WS_BORDER, WS_CAPTION,
+        WS_DLGFRAME, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
     };
 
     const DECORATION_STYLES: u32 = WS_CAPTION
@@ -80,6 +80,13 @@ mod imp {
             None
         } else {
             Some(state.found)
+        }
+    }
+
+    unsafe fn hide_menu(hwnd: HWND) {
+        unsafe {
+            SetMenu(hwnd, std::ptr::null_mut());
+            DrawMenuBar(hwnd);
         }
     }
 
