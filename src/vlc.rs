@@ -121,6 +121,19 @@ mod imp {
         1
     }
 
+    unsafe fn hide_controls(hwnd: HWND, client_width: i32) {
+        let state = ControlsState {
+            parent_width: client_width,
+        };
+        unsafe {
+            EnumChildWindows(
+                hwnd,
+                Some(controls_cb),
+                &state as *const ControlsState as LPARAM,
+            );
+        }
+    }
+
     fn snap_hwnd(hwnd: HWND, rect: &egui::Rect) -> SnapResult {
         unsafe {
             ShowWindow(hwnd, SW_RESTORE);
