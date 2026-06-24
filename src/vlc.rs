@@ -20,11 +20,11 @@ mod imp {
     use winapi::shared::windef::HWND;
     use winapi::um::errhandlingapi::GetLastError;
     use winapi::um::winuser::{
-        DrawMenuBar, EnumChildWindows, EnumWindows, GetClientRect, GetWindowLongPtrW,
-        GetWindowTextW, IsWindowVisible, SetMenu, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-        GWL_STYLE, HWND_TOP, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SW_RESTORE,
-        WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
-        WS_THICKFRAME,
+        DrawMenuBar, EnumChildWindows, EnumWindows, GetClassNameW, GetClientRect,
+        GetWindowLongPtrW, GetWindowTextW, IsWindowVisible, SetMenu, SetWindowLongPtrW,
+        SetWindowPos, ShowWindow, GWL_STYLE, HWND_TOP, HWND_TOPMOST, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SW_RESTORE, WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_MAXIMIZEBOX,
+        WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
     };
 
     const DECORATION_STYLES: u32 = WS_CAPTION
@@ -34,6 +34,10 @@ mod imp {
         | WS_SYSMENU
         | WS_BORDER
         | WS_DLGFRAME;
+
+    // Wraps HWND for safe transfer to a worker thread (it is just a usize).
+    struct SendHWND(HWND);
+    unsafe impl Send for SendHWND {}
 
     struct FindState {
         needle: Vec<u16>,
@@ -91,21 +95,32 @@ mod imp {
         }
     }
 
-    struct LargestChild {
+    unsafe fn hwnd_class(hwnd: HWND) -> String {
+        let mut buf = [0u16; 256];
+        let len = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32) } as usize;
+        String::from_utf16_lossy(&buf[..len])
+    }
+
+    struct VideoChild {
         hwnd: HWND,
         area: i64,
     }
 
-    // Finds the largest visible child HWND — VLC's video surface (DirectX/OpenGL
-    // requires a native window, so it IS a real child HWND unlike Qt widgets).
-    unsafe extern "system" fn largest_child_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let state = unsafe { &mut *(lparam as *mut LargestChild) };
+    unsafe extern "system" fn video_child_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let state = unsafe { &mut *(lparam as *mut VideoChild) };
 
         if unsafe { IsWindowVisible(hwnd) } == 0 {
             return 1;
         }
 
-        let mut r = unsafe { std::mem::zeroed() };
+        // Qt widget class names start with "Qt" — those are painted UI elements,
+        // not real child HWNDs we can resize. VLC's video renderer (Direct3D,
+        // OpenGL, etc.) registers a plain Win32 class without the "Qt" prefix.
+        if unsafe { hwnd_class(hwnd) }.starts_with("Qt") {
+            return 1;
+        }
+
+        let mut r: winapi::shared::windef::RECT = unsafe { std::mem::zeroed() };
         if unsafe { GetClientRect(hwnd, &mut r) } == 0 {
             return 1;
         }
@@ -119,10 +134,8 @@ mod imp {
         1
     }
 
-    // Stretches VLC's video child HWND to cover the full parent client area,
-    // hiding the Qt-drawn controls bar and menu that sit behind it.
     unsafe fn expand_video_child(parent: HWND, w: i32, h: i32) {
-        let mut state = LargestChild {
+        let mut state = VideoChild {
             hwnd: std::ptr::null_mut(),
             area: 0,
         };
@@ -130,20 +143,12 @@ mod imp {
         unsafe {
             EnumChildWindows(
                 parent,
-                Some(largest_child_cb),
-                &mut state as *mut LargestChild as LPARAM,
+                Some(video_child_cb),
+                &mut state as *mut VideoChild as LPARAM,
             );
 
             if !state.hwnd.is_null() {
-                SetWindowPos(
-                    state.hwnd,
-                    HWND_TOP,
-                    0,
-                    0,
-                    w,
-                    h,
-                    SWP_NOACTIVATE,
-                );
+                SetWindowPos(state.hwnd, HWND_TOP, 0, 0, w, h, SWP_NOACTIVATE);
             }
         }
     }
@@ -173,7 +178,20 @@ mod imp {
                 return SnapResult::Error(GetLastError());
             }
 
-            expand_video_child(hwnd, rect.width() as i32, rect.height() as i32);
+            // VLC's Qt event loop processes the WM_SIZE we just triggered
+            // asynchronously and re-lays out its children after SetWindowPos
+            // returns, undoing any immediate child resize. Run the video-surface
+            // expand on a thread so it fires after VLC's layout pass.
+            let send = SendHWND(hwnd);
+            let w = rect.width() as i32;
+            let h = rect.height() as i32;
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                unsafe { expand_video_child(send.0, w, h) };
+                // Second pass to catch any follow-up redraws VLC triggers.
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                unsafe { expand_video_child(send.0, w, h) };
+            });
 
             SnapResult::Ok
         }
