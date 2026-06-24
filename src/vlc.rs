@@ -22,9 +22,9 @@ mod imp {
     use winapi::um::winuser::{
         DrawMenuBar, EnumChildWindows, EnumWindows, GetClientRect, GetWindowLongPtrW,
         GetWindowTextW, IsWindowVisible, SetMenu, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-        GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SW_HIDE,
-        SW_RESTORE, WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_MAXIMIZEBOX,
-        WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+        GWL_STYLE, HWND_TOP, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SW_RESTORE,
+        WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
+        WS_THICKFRAME,
     };
 
     const DECORATION_STYLES: u32 = WS_CAPTION
@@ -34,9 +34,6 @@ mod imp {
         | WS_SYSMENU
         | WS_BORDER
         | WS_DLGFRAME;
-
-    // Height threshold (pixels) for identifying toolbar-height child windows.
-    const TOOLBAR_MAX_HEIGHT: i32 = 80;
 
     struct FindState {
         needle: Vec<u16>,
@@ -94,43 +91,60 @@ mod imp {
         }
     }
 
-    struct ControlsState {
-        parent_width: i32,
+    struct LargestChild {
+        hwnd: HWND,
+        area: i64,
     }
 
-    unsafe extern "system" fn controls_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let state = unsafe { &*(lparam as *const ControlsState) };
+    // Finds the largest visible child HWND — VLC's video surface (DirectX/OpenGL
+    // requires a native window, so it IS a real child HWND unlike Qt widgets).
+    unsafe extern "system" fn largest_child_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let state = unsafe { &mut *(lparam as *mut LargestChild) };
 
         if unsafe { IsWindowVisible(hwnd) } == 0 {
             return 1;
         }
 
-        let mut rect = unsafe { std::mem::zeroed() };
-        if unsafe { GetClientRect(hwnd, &mut rect) } == 0 {
+        let mut r = unsafe { std::mem::zeroed() };
+        if unsafe { GetClientRect(hwnd, &mut r) } == 0 {
             return 1;
         }
 
-        let h = rect.bottom - rect.top;
-        let w = rect.right - rect.left;
-
-        // Hide child windows that span most of the parent width and are toolbar-tall.
-        if h > 0 && h <= TOOLBAR_MAX_HEIGHT && w >= state.parent_width / 2 {
-            unsafe { ShowWindow(hwnd, SW_HIDE) };
+        let area = (r.right - r.left) as i64 * (r.bottom - r.top) as i64;
+        if area > state.area {
+            state.area = area;
+            state.hwnd = hwnd;
         }
 
         1
     }
 
-    unsafe fn hide_controls(hwnd: HWND, client_width: i32) {
-        let state = ControlsState {
-            parent_width: client_width,
+    // Stretches VLC's video child HWND to cover the full parent client area,
+    // hiding the Qt-drawn controls bar and menu that sit behind it.
+    unsafe fn expand_video_child(parent: HWND, w: i32, h: i32) {
+        let mut state = LargestChild {
+            hwnd: std::ptr::null_mut(),
+            area: 0,
         };
+
         unsafe {
             EnumChildWindows(
-                hwnd,
-                Some(controls_cb),
-                &state as *const ControlsState as LPARAM,
+                parent,
+                Some(largest_child_cb),
+                &mut state as *mut LargestChild as LPARAM,
             );
+
+            if !state.hwnd.is_null() {
+                SetWindowPos(
+                    state.hwnd,
+                    HWND_TOP,
+                    0,
+                    0,
+                    w,
+                    h,
+                    SWP_NOACTIVATE,
+                );
+            }
         }
     }
 
@@ -139,11 +153,6 @@ mod imp {
             ShowWindow(hwnd, SW_RESTORE);
 
             hide_menu(hwnd);
-
-            let mut client_rect = std::mem::zeroed();
-            GetClientRect(hwnd, &mut client_rect);
-            let client_width = client_rect.right - client_rect.left;
-            hide_controls(hwnd, client_width);
 
             let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
             let new_style = (style & !DECORATION_STYLES) as isize;
@@ -164,16 +173,7 @@ mod imp {
                 return SnapResult::Error(GetLastError());
             }
 
-            // Second pass: reflow the video into the now-cleared space.
-            SetWindowPos(
-                hwnd,
-                HWND_TOPMOST,
-                rect.left() as i32,
-                rect.top() as i32,
-                rect.width() as i32,
-                rect.height() as i32,
-                SWP_NOACTIVATE | SWP_FRAMECHANGED,
-            );
+            expand_video_child(hwnd, rect.width() as i32, rect.height() as i32);
 
             SnapResult::Ok
         }
