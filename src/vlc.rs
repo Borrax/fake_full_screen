@@ -20,8 +20,8 @@ mod imp {
     use winapi::shared::windef::HWND;
     use winapi::um::errhandlingapi::GetLastError;
     use winapi::um::winuser::{
-        DrawMenuBar, EnumChildWindows, EnumWindows, GetClientRect, GetWindowTextW,
-        IsWindowVisible, SetMenu, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+        DrawMenuBar, EnumChildWindows, EnumWindows, GetClientRect, GetWindowLongPtrW,
+        GetWindowTextW, IsWindowVisible, SetMenu, SetWindowLongPtrW, SetWindowPos, ShowWindow,
         GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SW_HIDE,
         SW_RESTORE, WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_MAXIMIZEBOX,
         WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
