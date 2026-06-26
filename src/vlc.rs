@@ -1,6 +1,9 @@
-//! Win32 helpers for finding VLC's window and snapping it into a target rect.
+//! Win32 helpers for finding VLC's window and snapping it into a target rect,
+//! plus launching VLC in a chrome-free state.
 //!
 //! Non-Windows targets get no-op stubs so the crate compiles on Linux / macOS.
+
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnapResult {
@@ -10,19 +13,46 @@ pub enum SnapResult {
     Error(u32),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaunchResult {
+    Ok,
+    // VLC executable could not be located on disk
+    NotInstalled,
+    // std::process spawn error, stringified
+    Error(String),
+}
+
+// VLC flags that suppress all of VLC's own UI and stop it fighting our snap:
+//   --qt-minimal-view      drops the menu bar and the bottom controls/seek bar
+//   --no-qt-fs-controller  kills the floating fullscreen controller
+//   --no-qt-video-autoresize  stops VLC resizing its window to the native video
+//                          size, which otherwise undoes our SetWindowPos
+//   --no-video-title-show / --no-osd  suppress overlay text
+// Verified on the test machine: this leaves only the OS titlebar, which
+// snap_vlc then strips, and the snapped rect holds.
+const MINIMAL_VLC_ARGS: &[&str] = &[
+    "--qt-minimal-view",
+    "--no-qt-fs-controller",
+    "--no-qt-video-autoresize",
+    "--no-video-title-show",
+    "--no-osd",
+    "--loop",
+];
+
 #[cfg(target_os = "windows")]
 mod imp {
-    use super::SnapResult;
+    use super::{LaunchResult, SnapResult, MINIMAL_VLC_ARGS};
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
 
     use winapi::shared::minwindef::{BOOL, LPARAM};
     use winapi::shared::windef::HWND;
     use winapi::um::errhandlingapi::GetLastError;
     use winapi::um::winuser::{
-        DrawMenuBar, EnumChildWindows, EnumWindows, GetClassNameW, GetClientRect,
-        GetWindowLongPtrW, GetWindowTextW, IsWindowVisible, SetMenu, SetWindowLongPtrW,
-        SetWindowPos, ShowWindow, GWL_STYLE, HWND_TOP, HWND_TOPMOST, SWP_FRAMECHANGED,
+        DrawMenuBar, EnumWindows, GetWindowLongPtrW, GetWindowTextW, IsWindowVisible, SetMenu,
+        SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED,
         SWP_NOACTIVATE, SW_RESTORE, WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_MAXIMIZEBOX,
         WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
     };
@@ -34,10 +64,6 @@ mod imp {
         | WS_SYSMENU
         | WS_BORDER
         | WS_DLGFRAME;
-
-    // Wraps HWND for safe transfer to a worker thread (it is just a usize).
-    struct SendHWND(HWND);
-    unsafe impl Send for SendHWND {}
 
     struct FindState {
         needle: Vec<u16>,
@@ -95,106 +121,59 @@ mod imp {
         }
     }
 
-    unsafe fn hwnd_class(hwnd: HWND) -> String {
-        let mut buf = [0u16; 256];
-        let len = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32) } as usize;
-        String::from_utf16_lossy(&buf[..len])
-    }
-
-    struct VideoChild {
-        hwnd: HWND,
-        area: i64,
-    }
-
-    unsafe extern "system" fn video_child_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let state = unsafe { &mut *(lparam as *mut VideoChild) };
-
-        if unsafe { IsWindowVisible(hwnd) } == 0 {
-            return 1;
-        }
-
-        // Qt widget class names start with "Qt" — those are painted UI elements,
-        // not real child HWNDs we can resize. VLC's video renderer (Direct3D,
-        // OpenGL, etc.) registers a plain Win32 class without the "Qt" prefix.
-        if unsafe { hwnd_class(hwnd) }.starts_with("Qt") {
-            return 1;
-        }
-
-        let mut r: winapi::shared::windef::RECT = unsafe { std::mem::zeroed() };
-        if unsafe { GetClientRect(hwnd, &mut r) } == 0 {
-            return 1;
-        }
-
-        let area = (r.right - r.left) as i64 * (r.bottom - r.top) as i64;
-        if area > state.area {
-            state.area = area;
-            state.hwnd = hwnd;
-        }
-
-        1
-    }
-
-    unsafe fn expand_video_child(parent: HWND, w: i32, h: i32) {
-        let mut state = VideoChild {
-            hwnd: std::ptr::null_mut(),
-            area: 0,
-        };
-
+    // SWP_NOZORDER must be absent so HWND_TOPMOST actually takes effect.
+    unsafe fn place_window(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) -> i32 {
         unsafe {
-            EnumChildWindows(
-                parent,
-                Some(video_child_cb),
-                &mut state as *mut VideoChild as LPARAM,
-            );
-
-            if !state.hwnd.is_null() {
-                SetWindowPos(state.hwnd, HWND_TOP, 0, 0, w, h, SWP_NOACTIVATE);
-            }
+            SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                x,
+                y,
+                w,
+                h,
+                SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            )
         }
     }
 
     fn snap_hwnd(hwnd: HWND, rect: &egui::Rect) -> SnapResult {
+        let x = rect.left() as i32;
+        let y = rect.top() as i32;
+        let w = rect.width() as i32;
+        let h = rect.height() as i32;
+
         unsafe {
             ShowWindow(hwnd, SW_RESTORE);
 
+            // Belt-and-suspenders: VLC launched with --qt-minimal-view has no
+            // menu, but stripping it is harmless if one is ever present.
             hide_menu(hwnd);
 
             let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
             let new_style = (style & !DECORATION_STYLES) as isize;
             SetWindowLongPtrW(hwnd, GWL_STYLE, new_style);
 
-            // SWP_NOZORDER must be absent so HWND_TOPMOST actually takes effect.
-            let ok = SetWindowPos(
-                hwnd,
-                HWND_TOPMOST,
-                rect.left() as i32,
-                rect.top() as i32,
-                rect.width() as i32,
-                rect.height() as i32,
-                SWP_NOACTIVATE | SWP_FRAMECHANGED,
-            );
-
-            if ok == 0 {
+            if place_window(hwnd, x, y, w, h) == 0 {
                 return SnapResult::Error(GetLastError());
             }
-
-            // VLC's Qt event loop processes the WM_SIZE we just triggered
-            // asynchronously and re-lays out its children after SetWindowPos
-            // returns, undoing any immediate child resize. Run the video-surface
-            // expand on a thread so it fires after VLC's layout pass.
-            let send = SendHWND(hwnd);
-            let w = rect.width() as i32;
-            let h = rect.height() as i32;
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                unsafe { expand_video_child(send.0, w, h) };
-                // Second pass to catch any follow-up redraws VLC triggers.
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                unsafe { expand_video_child(send.0, w, h) };
-            });
-
-            SnapResult::Ok
         }
+
+        // VLC's Qt event loop runs layout passes for the first few seconds after
+        // the window appears, each resizing the top-level window back toward
+        // fullscreen and undoing the SetWindowPos above. Re-assert the same
+        // placement repeatedly across that settling window so the final state
+        // sticks regardless of when the user snaps. HWND is passed as usize
+        // because raw pointers are not Send; we rebuild it inside the thread.
+        let hwnd_bits = hwnd as usize;
+        std::thread::spawn(move || {
+            let hwnd = hwnd_bits as HWND;
+            for delay in [120u64, 250, 500, 800, 1200, 1800, 2500] {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+                unsafe { place_window(hwnd, x, y, w, h) };
+            }
+        });
+
+        SnapResult::Ok
     }
 
     pub fn snap_vlc(rect: &egui::Rect) -> SnapResult {
@@ -203,17 +182,53 @@ mod imp {
             None => SnapResult::NotFound,
         }
     }
+
+    fn vlc_exe() -> Option<PathBuf> {
+        // Standard install locations; fall back to PATH lookup via the bare name.
+        let candidates = [
+            r"C:\Program Files\VideoLAN\VLC\vlc.exe",
+            r"C:\Program Files (x86)\VideoLAN\VLC\vlc.exe",
+        ];
+        for c in candidates {
+            let p = PathBuf::from(c);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        // Let the OS resolve it from PATH as a last resort.
+        Some(PathBuf::from("vlc.exe"))
+    }
+
+    pub fn launch_vlc(video: &Path) -> LaunchResult {
+        let Some(exe) = vlc_exe() else {
+            return LaunchResult::NotInstalled;
+        };
+
+        match Command::new(exe).args(MINIMAL_VLC_ARGS).arg(video).spawn() {
+            Ok(_) => LaunchResult::Ok,
+            Err(e) => LaunchResult::Error(e.to_string()),
+        }
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
 mod imp {
-    use super::SnapResult;
+    use super::{LaunchResult, SnapResult};
+    use std::path::Path;
 
     pub fn snap_vlc(_rect: &egui::Rect) -> SnapResult {
         SnapResult::NotFound
+    }
+
+    pub fn launch_vlc(_video: &Path) -> LaunchResult {
+        LaunchResult::NotInstalled
     }
 }
 
 pub fn snap_vlc(rect: &egui::Rect) -> SnapResult {
     imp::snap_vlc(rect)
+}
+
+pub fn launch_vlc(video: &Path) -> LaunchResult {
+    imp::launch_vlc(video)
 }
