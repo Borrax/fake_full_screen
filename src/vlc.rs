@@ -32,7 +32,7 @@ pub enum LaunchResult {
 // snap_vlc then strips, and the snapped rect holds.
 const MINIMAL_VLC_ARGS: &[&str] = &[
     "--qt-minimal-view",
-    "--no-qt-fs-controller",
+    "--fullscreen",
     "--no-qt-video-autoresize",
     "--no-video-title-show",
     "--no-osd",
