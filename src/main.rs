@@ -9,9 +9,7 @@ fn main() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
         .with_title("fake_full_screen")
         .with_maximized(true)
-        .with_decorations(false)
-        .with_always_on_top()
-        .with_taskbar(false);
+        .with_decorations(false);
 
     let native_options = eframe::NativeOptions {
         viewport,
