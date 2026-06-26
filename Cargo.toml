@@ -7,6 +7,7 @@ edition = "2024"
 dark-light = "2.0.0"
 eframe = { version = "0.34.3", features = ["wgpu"] }
 egui = "0.34.3"
+rfd = "0.15"
 
 # Win32 API access for borderless-fullscreen window manipulation on Windows.
 [target.'cfg(windows)'.dependencies]
