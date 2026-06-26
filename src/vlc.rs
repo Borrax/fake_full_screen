@@ -24,7 +24,8 @@ pub enum LaunchResult {
 
 // VLC flags that suppress all of VLC's own UI and stop it fighting our snap:
 //   --qt-minimal-view      drops the menu bar and the bottom controls/seek bar
-//   --no-qt-fs-controller  kills the floating fullscreen controller
+//   --fullscreen           VLC enters its own fullscreen mode so the floating
+//                          fullscreen controller appears on hover and auto-hides
 //   --no-qt-video-autoresize  stops VLC resizing its window to the native video
 //                          size, which otherwise undoes our SetWindowPos
 //   --no-video-title-show / --no-osd  suppress overlay text
