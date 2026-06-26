@@ -1,6 +1,6 @@
 use crate::region::{Region, SplitDirection};
 use crate::theme::Theme;
-use crate::vlc::{snap_vlc, SnapResult};
+use crate::vlc::{launch_vlc, snap_vlc, LaunchResult, SnapResult};
 use egui::{Align2, CentralPanel, Color32, Context, FontId, Panel, Sense, Stroke};
 
 const DIVIDER_THICKNESS: f32 = 2.0;
@@ -147,6 +147,27 @@ impl eframe::App for App {
                     }
                     ui.separator();
                 }
+
+                if ui.button("📂 Launch VLC").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter(
+                            "Video",
+                            &["mp4", "mkv", "avi", "mov", "webm", "m4v", "wmv", "flv"],
+                        )
+                        .pick_file()
+                    {
+                        let status = match launch_vlc(&path) {
+                            LaunchResult::Ok => {
+                                "VLC launched — select a region, then Snap".to_owned()
+                            }
+                            LaunchResult::NotInstalled => "VLC not installed".to_owned(),
+                            LaunchResult::Error(e) => format!("Launch failed: {e}"),
+                        };
+                        self.snap_status = Some(status);
+                    }
+                }
+
+                ui.separator();
 
                 let snap_enabled = self.selected.is_some();
                 ui.add_enabled_ui(snap_enabled, |ui| {
