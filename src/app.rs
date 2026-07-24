@@ -1,3 +1,4 @@
+use crate::overlay::Overlay;
 use crate::region::{Region, SplitDirection};
 use crate::theme::Theme;
 use crate::vlc::{launch_vlc, snap_vlc, LaunchResult, SnapResult};
@@ -27,6 +28,8 @@ pub struct App {
     startup_done: bool,
     // screen rect captured at startup for Reset
     screen_rect: egui::Rect,
+    // hover-fade playback control bar for the currently snapped region
+    overlay: Option<Overlay>,
 }
 
 impl App {
@@ -44,6 +47,7 @@ impl App {
             snap_status: None,
             startup_done: false,
             screen_rect: screen,
+            overlay: None,
         }
     }
 }
@@ -77,6 +81,10 @@ impl eframe::App for App {
         if !self.startup_done {
             snap_to_primary_monitor(&ctx);
             self.startup_done = true;
+        }
+
+        if let Some(overlay) = &mut self.overlay {
+            overlay.show(&ctx);
         }
 
         // Keyboard shortcuts
@@ -176,7 +184,10 @@ impl eframe::App for App {
                             let leaves = self.root.leaves();
                             if let Some(&rect) = leaves.get(idx) {
                                 let status = match snap_vlc(&rect) {
-                                    SnapResult::Ok => "VLC snapped (borderless) ✓".to_owned(),
+                                    SnapResult::Ok => {
+                                        self.overlay = Some(Overlay::new(rect));
+                                        "VLC snapped (borderless) ✓".to_owned()
+                                    }
                                     SnapResult::NotFound => "VLC not found — is it open?".to_owned(),
                                     SnapResult::Error(code) => {
                                         format!("Win32 error {code}")

@@ -1,4 +1,5 @@
 pub mod app;
+pub mod overlay;
 pub mod region;
 pub mod theme;
 pub mod vlc;
