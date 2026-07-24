@@ -23,14 +23,21 @@ pub enum LaunchResult {
 }
 
 // VLC flags that suppress all of VLC's own UI and stop it fighting our snap:
-//   --qt-minimal-view      drops the menu bar and the bottom controls/seek bar
-//   --fullscreen           VLC enters its own fullscreen mode so the floating
-//                          fullscreen controller appears on hover and auto-hides
+//   --qt-minimal-view      drops the menu bar and the docked toolbar/seek bar.
+//                          REQUIRED: snap_hwnd resizes VLC into a sub-rect, which
+//                          drops it out of true fullscreen into windowed mode;
+//                          without minimal view a windowed VLC shows its menu bar
+//                          and docked controls PERMANENTLY. Verified 2026-07-24.
+//   --fullscreen           VLC starts fullscreen so the floating fullscreen
+//                          controller (hover controls) is available.
 //   --no-qt-video-autoresize  stops VLC resizing its window to the native video
 //                          size, which otherwise undoes our SetWindowPos
 //   --no-video-title-show / --no-osd  suppress overlay text
-// Verified on the test machine: this leaves only the OS titlebar, which
-// snap_vlc then strips, and the snapped rect holds.
+//   --loop                 keep replaying the file
+// TRADEOFF (fundamental to VLC): the hover-only fullscreen controller exists
+// ONLY while VLC is truly fullscreen. Snapping to a sub-rect makes VLC windowed,
+// where minimal view keeps it chrome-free but also means NO hover controller.
+// You cannot get both a snapped sub-rect AND VLC's native hover controls.
 const MINIMAL_VLC_ARGS: &[&str] = &[
     "--qt-minimal-view",
     "--fullscreen",
@@ -205,7 +212,12 @@ mod imp {
             return LaunchResult::NotInstalled;
         };
 
-        match Command::new(exe).args(MINIMAL_VLC_ARGS).arg(video).spawn() {
+        match Command::new(exe)
+            .args(MINIMAL_VLC_ARGS)
+            .args(crate::vlc_http::launch_args())
+            .arg(video)
+            .spawn()
+        {
             Ok(_) => LaunchResult::Ok,
             Err(e) => LaunchResult::Error(e.to_string()),
         }

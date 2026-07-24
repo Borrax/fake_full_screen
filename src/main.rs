@@ -1,9 +1,11 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod app;
+mod overlay;
 mod region;
 mod theme;
 mod vlc;
+mod vlc_http;
 
 fn main() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
