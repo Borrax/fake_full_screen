@@ -22,17 +22,21 @@ pub enum LaunchResult {
     Error(String),
 }
 
-// VLC flags that suppress all of VLC's own UI and stop it fighting our snap:
-//   --qt-minimal-view      drops the menu bar and the bottom controls/seek bar
-//   --fullscreen           VLC enters its own fullscreen mode so the floating
-//                          fullscreen controller appears on hover and auto-hides
+// VLC flags that keep VLC's own chrome out of the way while leaving the hover
+// controls available, and stop it fighting our snap:
+//   --fullscreen           VLC enters its own fullscreen mode: the menu bar and
+//                          the docked toolbar/seek bar are hidden, and the
+//                          floating fullscreen controller appears on hover and
+//                          then auto-hides.
 //   --no-qt-video-autoresize  stops VLC resizing its window to the native video
 //                          size, which otherwise undoes our SetWindowPos
 //   --no-video-title-show / --no-osd  suppress overlay text
-// Verified on the test machine: this leaves only the OS titlebar, which
-// snap_vlc then strips, and the snapped rect holds.
+//   --loop                 keep replaying the file
+// NB: do NOT add --qt-minimal-view. Minimal view suppresses the fullscreen
+// controller (VideoLAN forums: entering minimal view in fullscreen makes the
+// controls disappear), so the hover controls never show up. --fullscreen alone
+// already hides the menu bar and docked controls, which is all we need here.
 const MINIMAL_VLC_ARGS: &[&str] = &[
-    "--qt-minimal-view",
     "--fullscreen",
     "--no-qt-video-autoresize",
     "--no-video-title-show",
