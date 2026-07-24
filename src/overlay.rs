@@ -17,6 +17,7 @@ use egui::{
     Color32, Context, CornerRadius, Pos2, Rect, Stroke, Vec2, ViewportBuilder, ViewportClass,
     ViewportId,
 };
+use std::sync::Once;
 use std::time::{Duration, Instant};
 
 use crate::vlc_http::{self, Status};
@@ -24,17 +25,37 @@ use crate::vlc_http::{self, Status};
 const BAR_HEIGHT: f32 = 72.0;
 const FADE_IN_SECS: f32 = 0.15;
 const FADE_OUT_SECS: f32 = 0.35;
-const LINGER: Duration = Duration::from_millis(1200);
+/// Hide the bar this long after the last in-region mouse movement or control use.
+const HIDE_DELAY: Duration = Duration::from_secs(5);
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const REPAINT_INTERVAL: Duration = Duration::from_millis(80);
 pub const OVERLAY_TITLE: &str = "ffs_overlay_bar";
+
+/// Keeps egui's update loop ticking even while the app is unfocused/occluded by
+/// VLC. Without this, `request_repaint_after` alone is not delivered reliably in
+/// the background, so the idle fade-out only runs when another event wakes the
+/// event loop (e.g. clicking a different window). One detached pump per process.
+static REPAINT_PUMP: Once = Once::new();
+
+fn ensure_repaint_pump(ctx: &Context) {
+    REPAINT_PUMP.call_once(|| {
+        let ctx = ctx.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(100));
+            ctx.request_repaint();
+        });
+    });
+}
 
 /// Playback control bar overlay for a single snapped region.
 pub struct Overlay {
     region: Rect,
     viewport_id: ViewportId,
 
-    last_seen_inside: Option<Instant>,
+    // Last in-region mouse movement or control interaction; the bar stays up
+    // until HIDE_DELAY after this.
+    last_activity: Instant,
+    last_cursor_pos: Option<(i32, i32)>,
     opacity: f32,
     last_frame: Instant,
     click_through: bool, // current WS_EX_TRANSPARENT state applied to the HWND
@@ -58,7 +79,9 @@ impl Overlay {
         Self {
             region,
             viewport_id: ViewportId::from_hash_of("ffs_overlay_bar_viewport"),
-            last_seen_inside: None,
+            // Start hidden: treat the last activity as already past HIDE_DELAY.
+            last_activity: now.checked_sub(HIDE_DELAY).unwrap_or(now),
+            last_cursor_pos: None,
             opacity: 0.0,
             last_frame: now,
             click_through: true,
@@ -81,21 +104,27 @@ impl Overlay {
     /// Call once per frame while this overlay should be alive.
     pub fn show(&mut self, ctx: &Context) {
         ctx.request_repaint_after(REPAINT_INTERVAL);
+        ensure_repaint_pump(ctx);
 
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
         self.last_frame = now;
 
-        // Hover gating using the GLOBAL cursor, not egui's pointer (VLC's
-        // window covers the region and owns the OS cursor most of the time).
+        // Hover gating using the GLOBAL cursor, not egui's pointer (VLC's window
+        // covers the region and owns the OS cursor most of the time). The bar
+        // stays up while the mouse MOVES within the region and hides only after
+        // HIDE_DELAY of stillness (control use also counts, applied below).
         let cursor = win::global_cursor_pos();
         let inside = cursor.is_some_and(|(x, y)| self.region.contains(Pos2::new(x as f32, y as f32)));
-        if inside {
-            self.last_seen_inside = Some(now);
+        let moved = cursor.is_some() && cursor != self.last_cursor_pos;
+        self.last_cursor_pos = cursor;
+        if inside && moved {
+            self.last_activity = now;
         }
-        let target = match self.last_seen_inside {
-            Some(t) if now.duration_since(t) < LINGER => 1.0,
-            _ => 0.0,
+        let target = if now.duration_since(self.last_activity) < HIDE_DELAY {
+            1.0
+        } else {
+            0.0
         };
 
         let tau = if target > self.opacity { FADE_IN_SECS } else { FADE_OUT_SECS };
@@ -130,12 +159,19 @@ impl Overlay {
         let opacity = self.opacity;
         let seek_drag = &mut self.seek_drag;
         let vol_drag = &mut self.vol_drag;
+        let mut interacted = false;
+        let interacted_ref = &mut interacted;
 
         ctx.show_viewport_immediate(self.viewport_id, builder, move |ui, _class: ViewportClass| {
             ui.ctx().request_repaint_after(REPAINT_INTERVAL);
             ui.set_opacity(opacity);
-            paint_bar(ui, &status, seek_drag, vol_drag);
+            *interacted_ref = paint_bar(ui, &status, seek_drag, vol_drag);
         });
+
+        // Using a control (click/drag) keeps the bar up regardless of movement.
+        if interacted {
+            self.last_activity = now;
+        }
 
         // Click-through + re-assert topmost. VLC is topmost too, so we redo
         // this every frame to keep the bar above it.
@@ -163,7 +199,13 @@ impl Overlay {
     }
 }
 
-fn paint_bar(ui: &mut egui::Ui, status: &Status, seek_drag: &mut Option<f32>, vol_drag: &mut Option<f32>) {
+fn paint_bar(
+    ui: &mut egui::Ui,
+    status: &Status,
+    seek_drag: &mut Option<f32>,
+    vol_drag: &mut Option<f32>,
+) -> bool {
+    let mut interacted = false;
     let rect = ui.max_rect();
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(0), Color32::from_rgba_premultiplied(18, 18, 18, 210));
@@ -178,13 +220,16 @@ fn paint_bar(ui: &mut egui::Ui, status: &Status, seek_drag: &mut Option<f32>, vo
         ui.add_space(12.0);
 
         if ui.button("⏮").clicked() {
+            interacted = true;
             let _ = vlc_http::seek(-10);
         }
         let play_label = if status.state == "playing" { "⏸" } else { "▶" };
         if ui.button(play_label).clicked() {
+            interacted = true;
             let _ = vlc_http::play_pause();
         }
         if ui.button("⏭").clicked() {
+            interacted = true;
             let _ = vlc_http::seek(10);
         }
 
@@ -197,9 +242,11 @@ fn paint_bar(ui: &mut egui::Ui, status: &Status, seek_drag: &mut Option<f32>, vo
                 .trailing_fill(true),
         );
         if seek_resp.dragged() {
+            interacted = true;
             *seek_drag = Some(pos);
         }
         if seek_resp.drag_stopped() {
+            interacted = true;
             let target_secs = (pos * status.length as f32) as i64;
             let delta = target_secs - status.time;
             let _ = vlc_http::seek(delta);
@@ -225,9 +272,11 @@ fn paint_bar(ui: &mut egui::Ui, status: &Status, seek_drag: &mut Option<f32>, vo
                 .fixed_decimals(0),
         );
         if vol_resp.dragged() {
+            interacted = true;
             *vol_drag = Some(vol);
         }
         if vol_resp.drag_stopped() {
+            interacted = true;
             let delta = ((vol - cur_vol_pct) / 100.0 * 256.0) as i64;
             let _ = vlc_http::volume_delta(delta);
             *vol_drag = None;
@@ -235,6 +284,8 @@ fn paint_bar(ui: &mut egui::Ui, status: &Status, seek_drag: &mut Option<f32>, vo
 
         ui.add_space(12.0);
     });
+
+    interacted
 }
 
 #[cfg(target_os = "windows")]
