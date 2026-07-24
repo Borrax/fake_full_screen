@@ -22,21 +22,24 @@ pub enum LaunchResult {
     Error(String),
 }
 
-// VLC flags that keep VLC's own chrome out of the way while leaving the hover
-// controls available, and stop it fighting our snap:
-//   --fullscreen           VLC enters its own fullscreen mode: the menu bar and
-//                          the docked toolbar/seek bar are hidden, and the
-//                          floating fullscreen controller appears on hover and
-//                          then auto-hides.
+// VLC flags that suppress all of VLC's own UI and stop it fighting our snap:
+//   --qt-minimal-view      drops the menu bar and the docked toolbar/seek bar.
+//                          REQUIRED: snap_hwnd resizes VLC into a sub-rect, which
+//                          drops it out of true fullscreen into windowed mode;
+//                          without minimal view a windowed VLC shows its menu bar
+//                          and docked controls PERMANENTLY. Verified 2026-07-24.
+//   --fullscreen           VLC starts fullscreen so the floating fullscreen
+//                          controller (hover controls) is available.
 //   --no-qt-video-autoresize  stops VLC resizing its window to the native video
 //                          size, which otherwise undoes our SetWindowPos
 //   --no-video-title-show / --no-osd  suppress overlay text
 //   --loop                 keep replaying the file
-// NB: do NOT add --qt-minimal-view. Minimal view suppresses the fullscreen
-// controller (VideoLAN forums: entering minimal view in fullscreen makes the
-// controls disappear), so the hover controls never show up. --fullscreen alone
-// already hides the menu bar and docked controls, which is all we need here.
+// TRADEOFF (fundamental to VLC): the hover-only fullscreen controller exists
+// ONLY while VLC is truly fullscreen. Snapping to a sub-rect makes VLC windowed,
+// where minimal view keeps it chrome-free but also means NO hover controller.
+// You cannot get both a snapped sub-rect AND VLC's native hover controls.
 const MINIMAL_VLC_ARGS: &[&str] = &[
+    "--qt-minimal-view",
     "--fullscreen",
     "--no-qt-video-autoresize",
     "--no-video-title-show",
