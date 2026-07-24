@@ -26,7 +26,7 @@ const BAR_HEIGHT: f32 = 72.0;
 const FADE_IN_SECS: f32 = 0.15;
 const FADE_OUT_SECS: f32 = 0.35;
 /// Hide the bar this long after the last in-region mouse movement or control use.
-const HIDE_DELAY: Duration = Duration::from_secs(5);
+const HIDE_DELAY: Duration = Duration::from_secs(3);
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const REPAINT_INTERVAL: Duration = Duration::from_millis(80);
 pub const OVERLAY_TITLE: &str = "ffs_overlay_bar";

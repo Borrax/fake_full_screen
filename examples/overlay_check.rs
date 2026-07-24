@@ -273,24 +273,24 @@ mod win {
         // interactive through the 5s idle window (proving the repaint pump keeps
         // the fade-out running while idle) and only go click-through after it.
         set_cursor(50, 50);
-        sleep_ms(3000); // ~3s since last activity: still within the 5s hold
+        sleep_ms(1500); // ~1.5s since last activity: still within the 3s hold
         let mut c1_held = false;
         if let Some(hwnd) = find_overlay() {
             c1_held = ex_style(hwnd) & WS_EX_TRANSPARENT == 0;
         }
         println!(
-            "CHECK c1 (bar held interactive during 5s idle window): {}",
+            "CHECK c1 (bar held interactive during idle window): {}",
             if c1_held { "PASS" } else { "FAIL" }
         );
         all_pass &= c1_held;
 
-        sleep_ms(3500); // ~6.5s idle total: past HIDE_DELAY
+        sleep_ms(2500); // ~4s idle total: past HIDE_DELAY (3s)
         let mut c2_transparent = false;
         if let Some(hwnd) = find_overlay() {
             c2_transparent = ex_style(hwnd) & WS_EX_TRANSPARENT != 0;
         }
         println!(
-            "CHECK c2 (bar click-through after 5s of no movement): {}",
+            "CHECK c2 (bar click-through after 3s of no movement): {}",
             if c2_transparent { "PASS" } else { "FAIL" }
         );
         all_pass &= c2_transparent;
