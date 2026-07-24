@@ -4,6 +4,7 @@ mod app;
 mod region;
 mod theme;
 mod vlc;
+mod vlc_http;
 
 fn main() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()

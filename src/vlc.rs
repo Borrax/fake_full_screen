@@ -212,7 +212,12 @@ mod imp {
             return LaunchResult::NotInstalled;
         };
 
-        match Command::new(exe).args(MINIMAL_VLC_ARGS).arg(video).spawn() {
+        match Command::new(exe)
+            .args(MINIMAL_VLC_ARGS)
+            .args(crate::vlc_http::launch_args())
+            .arg(video)
+            .spawn()
+        {
             Ok(_) => LaunchResult::Ok,
             Err(e) => LaunchResult::Error(e.to_string()),
         }
